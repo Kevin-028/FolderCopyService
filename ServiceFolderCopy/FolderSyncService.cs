@@ -43,14 +43,25 @@ public class FolderSyncService : IFolderSyncService
         var source = new DirectoryInfo(_options.SourcePath);
         var target = new DirectoryInfo(_options.TargetPath);
 
-        CopyAll(source, target, cancellationToken);
+        int copiedFiles = 0;
+        int skippedFiles = 0;
 
-        _logger.LogInformation("Sincronização concluída com sucesso.");
+        CopyAll(source, target, cancellationToken, ref copiedFiles, ref skippedFiles);
+
+        _logger.LogInformation(
+            "Sincronização concluída. Arquivos copiados: {Copied}, ignorados (iguais): {Skipped}",
+            copiedFiles,
+            skippedFiles);
 
         return Task.CompletedTask;
     }
 
-    private void CopyAll(DirectoryInfo source, DirectoryInfo target, CancellationToken cancellationToken)
+    private void CopyAll(
+        DirectoryInfo source,
+        DirectoryInfo target,
+        CancellationToken cancellationToken,
+        ref int copiedFiles,
+        ref int skippedFiles)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -60,16 +71,42 @@ public class FolderSyncService : IFolderSyncService
             cancellationToken.ThrowIfCancellationRequested();
 
             var targetSubDir = target.CreateSubdirectory(dir.Name);
-            CopyAll(dir, targetSubDir, cancellationToken);
+            CopyAll(dir, targetSubDir, cancellationToken, ref copiedFiles, ref skippedFiles);
         }
 
-        // Copia arquivos
+        // Copia arquivos (somente se forem diferentes)
         foreach (var file in source.GetFiles())
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            string destFile = Path.Combine(target.FullName, file.Name);
-            file.CopyTo(destFile, overwrite: true);
+            string destFilePath = Path.Combine(target.FullName, file.Name);
+
+            bool shouldCopy = true;
+
+            if (File.Exists(destFilePath))
+            {
+                var destInfo = new FileInfo(destFilePath);
+
+                // Compara tamanho e data de modificação
+                if (destInfo.Length == file.Length &&
+                    destInfo.LastWriteTimeUtc == file.LastWriteTimeUtc)
+                {
+                    // É igual, não precisa copiar
+                    shouldCopy = false;
+                }
+            }
+
+            if (shouldCopy)
+            {
+                file.CopyTo(destFilePath, overwrite: true);
+                copiedFiles++;
+                _logger.LogDebug("Arquivo copiado: {File}", destFilePath);
+            }
+            else
+            {
+                skippedFiles++;
+                _logger.LogDebug("Arquivo ignorado (sem alterações): {File}", destFilePath);
+            }
         }
     }
 }

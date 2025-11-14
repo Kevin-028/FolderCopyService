@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.ServiceProcess;
 using System.Text;
+using System.Text.Json;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
@@ -10,6 +11,7 @@ namespace FolderCopyServiceInstall
 {
     public class MainForm : Form
     {
+        // Campos padrão (serviço)
         private TextBox txtServiceName;
         private TextBox txtExePath;
         private Button btnBrowse;
@@ -20,6 +22,13 @@ namespace FolderCopyServiceInstall
         private Button btnStatus;
         private Label lblStatus;
 
+        // Campos de configuração (appsettings.json)
+        private TextBox txtSourcePath;
+        private TextBox txtTargetPath;
+        private NumericUpDown numInterval;
+        private Button btnLoadConfig;
+        private Button btnSaveConfig;
+
         public MainForm()
         {
             InitializeComponents();
@@ -29,9 +38,13 @@ namespace FolderCopyServiceInstall
         private void InitializeComponents()
         {
             Text = "Instalador / Gerenciador - FolderCopyService";
-            Width = 650;
-            Height = 260;
+            Width = 720;
+            Height = 480;
             StartPosition = FormStartPosition.CenterScreen;
+
+            // ----------------------------
+            // SEÇÃO DO SERVIÇO
+            // ----------------------------
 
             var lblServiceName = new Label
             {
@@ -45,8 +58,8 @@ namespace FolderCopyServiceInstall
             {
                 Left = 130,
                 Top = 15,
-                Width = 480,
-                Text = "FolderCopyService" // mesmo nome do UseWindowsService
+                Width = 520,
+                Text = "FolderCopyService"
             };
 
             var lblExePath = new Label
@@ -61,15 +74,15 @@ namespace FolderCopyServiceInstall
             {
                 Left = 130,
                 Top = 55,
-                Width = 400
+                Width = 430
             };
 
             btnBrowse = new Button
             {
                 Text = "...",
-                Left = 540,
+                Left = 570,
                 Top = 53,
-                Width = 70
+                Width = 80
             };
             btnBrowse.Click += BtnBrowse_Click;
 
@@ -96,16 +109,16 @@ namespace FolderCopyServiceInstall
                 Text = "Iniciar serviço",
                 Left = 330,
                 Top = 100,
-                Width = 140
+                Width = 150
             };
             btnStart.Click += BtnStart_Click;
 
             btnStop = new Button
             {
                 Text = "Parar serviço",
-                Left = 480,
+                Left = 490,
                 Top = 100,
-                Width = 130
+                Width = 150
             };
             btnStop.Click += BtnStop_Click;
 
@@ -126,6 +139,95 @@ namespace FolderCopyServiceInstall
                 AutoSize = true
             };
 
+            // ----------------------------
+            // SEÇÃO DE CONFIGURAÇÃO
+            // ----------------------------
+
+            var grpConfig = new GroupBox
+            {
+                Text = "Configurações (appsettings.json)",
+                Left = 10,
+                Top = 220,
+                Width = 680,
+                Height = 200
+            };
+
+            var lblSource = new Label
+            {
+                Text = "Pasta de Origem:",
+                Left = 20,
+                Top = 40,
+                AutoSize = true
+            };
+
+            txtSourcePath = new TextBox
+            {
+                Left = 150,
+                Top = 35,
+                Width = 480
+            };
+
+            var lblTarget = new Label
+            {
+                Text = "Pasta de Destino:",
+                Left = 20,
+                Top = 80,
+                AutoSize = true
+            };
+
+            txtTargetPath = new TextBox
+            {
+                Left = 150,
+                Top = 75,
+                Width = 480
+            };
+
+            var lblInterval = new Label
+            {
+                Text = "Intervalo (minutos):",
+                Left = 20,
+                Top = 120,
+                AutoSize = true
+            };
+
+            numInterval = new NumericUpDown
+            {
+                Left = 150,
+                Top = 115,
+                Width = 100,
+                Minimum = 1,
+                Maximum = 1440,
+                Value = 20
+            };
+
+            btnLoadConfig = new Button
+            {
+                Text = "Carregar Config",
+                Left = 270,
+                Top = 155,
+                Width = 150
+            };
+            btnLoadConfig.Click += BtnLoadConfig_Click;
+
+            btnSaveConfig = new Button
+            {
+                Text = "Salvar / Aplicar",
+                Left = 430,
+                Top = 155,
+                Width = 150
+            };
+            btnSaveConfig.Click += BtnSaveConfig_Click;
+
+            grpConfig.Controls.Add(lblSource);
+            grpConfig.Controls.Add(txtSourcePath);
+            grpConfig.Controls.Add(lblTarget);
+            grpConfig.Controls.Add(txtTargetPath);
+            grpConfig.Controls.Add(lblInterval);
+            grpConfig.Controls.Add(numInterval);
+            grpConfig.Controls.Add(btnLoadConfig);
+            grpConfig.Controls.Add(btnSaveConfig);
+
+            // Adiciona os controles ao form
             Controls.Add(lblServiceName);
             Controls.Add(txtServiceName);
             Controls.Add(lblExePath);
@@ -137,39 +239,34 @@ namespace FolderCopyServiceInstall
             Controls.Add(btnStop);
             Controls.Add(btnStatus);
             Controls.Add(lblStatus);
+            Controls.Add(grpConfig);
         }
-
-        #region Inicialização
 
         private void InitializeOnLoad()
         {
-            // 1) Garante que a pasta de instalação existe
             EnsureInstallFolder();
-
-            // 2) Copia o próprio installer para a pasta de instalação
             CopyInstallerToInstallFolder();
 
             string serviceName = txtServiceName.Text.Trim();
 
             if (ServiceExists(serviceName))
             {
-                // Serviço já instalado: tenta ler o caminho do registro
                 string? imagePath = TryGetServiceImagePath(serviceName);
-                if (!string.IsNullOrWhiteSpace(imagePath))
+                if (imagePath != null)
                 {
-                    string exePath = ExtractExePathFromImagePath(imagePath);
-                    if (!string.IsNullOrWhiteSpace(exePath) && File.Exists(exePath))
+                    string exe = ExtractExePathFromImagePath(imagePath);
+                    if (File.Exists(exe))
                     {
-                        txtExePath.Text = exePath;
+                        txtExePath.Text = exe;
                     }
                 }
 
                 UpdateStatus();
+                LoadConfig();
             }
             else
             {
-                // Serviço não existe ainda:
-                // tenta sugerir o EXE na mesma pasta do instalador (pendrive)
+                // Se não existe serviço, tenta sugerir o EXE na mesma pasta do installer
                 string baseDir = AppDomain.CurrentDomain.BaseDirectory;
                 string candidate = Path.Combine(baseDir, "FolderCopyService.exe");
 
@@ -180,16 +277,14 @@ namespace FolderCopyServiceInstall
             }
         }
 
-        #endregion
-
-        #region Eventos dos botões
+        #region --- BOTÕES INSTALAÇÃO/CONTROLE DO SERVIÇO ---
 
         private void BtnBrowse_Click(object? sender, EventArgs e)
         {
             using var ofd = new OpenFileDialog
             {
-                Filter = "Executável (*.exe)|*.exe|Todos os arquivos (*.*)|*.*",
-                Title = "Selecione o executável do serviço (FolderCopyService.exe)"
+                Filter = "Executável (*.exe)|*.exe",
+                Title = "Selecione FolderCopyService.exe"
             };
 
             if (ofd.ShowDialog() == DialogResult.OK)
@@ -203,29 +298,24 @@ namespace FolderCopyServiceInstall
             string serviceName = txtServiceName.Text.Trim();
             string exePathOriginal = txtExePath.Text.Trim();
 
-            if (string.IsNullOrWhiteSpace(serviceName) || string.IsNullOrWhiteSpace(exePathOriginal))
+            if (string.IsNullOrWhiteSpace(serviceName))
             {
-                MessageBox.Show("Informe o nome do serviço e o caminho do EXE.", "Atenção",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("Informe o nome do serviço.");
                 return;
             }
 
             if (!File.Exists(exePathOriginal))
             {
-                MessageBox.Show("Arquivo EXE não encontrado.", "Erro",
-                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show("EXE não encontrado.");
                 return;
             }
 
             if (ServiceExists(serviceName))
             {
-                MessageBox.Show("O serviço já existe.\n\nSe quiser atualizar os arquivos, desinstale e instale novamente.",
-                    "Informação",
-                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show("O serviço já está instalado.");
                 return;
             }
 
-            // 1) Copiar todos os arquivos da pasta de origem para a pasta de instalação
             string sourceDir = Path.GetDirectoryName(exePathOriginal)!;
             string installDir = GetInstallFolder();
 
@@ -233,28 +323,21 @@ namespace FolderCopyServiceInstall
             {
                 CopyDirectoryRecursive(sourceDir, installDir);
 
-                // Caminho que o serviço vai usar (no Program Files)
-                string serviceExePath = Path.Combine(installDir, Path.GetFileName(exePathOriginal));
+                string installedExe = Path.Combine(installDir, "FolderCopyService.exe");
+                string args = $"create \"{serviceName}\" binPath= \"{installedExe}\" start= auto";
 
-                // 2) Criar o serviço apontando para o EXE na pasta de instalação
-                string args = $"create \"{serviceName}\" binPath= \"{serviceExePath}\" start= auto";
+                RunSc(args, out string output, out string error);
 
-                if (RunSc(args, out string output, out string error))
+                if (!string.IsNullOrWhiteSpace(error))
                 {
-                    MessageBox.Show("Serviço instalado com sucesso.\n\n" + output, "Sucesso",
-                        MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    MessageBox.Show("Saída do SC:\n" + error);
                 }
-                else
-                {
-                    MessageBox.Show("Falha ao instalar o serviço.\n\n" + error, "Erro",
-                        MessageBoxButtons.OK, MessageBoxIcon.Error);
-                }
+
+                MessageBox.Show("Serviço instalado com sucesso!");
             }
             catch (Exception ex)
             {
-                MessageBox.Show("Erro ao copiar arquivos para a pasta de instalação:\n\n" + ex.Message,
-                    "Erro",
-                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show("Erro ao instalar:\n" + ex.Message);
             }
 
             UpdateStatus();
@@ -275,11 +358,15 @@ namespace FolderCopyServiceInstall
             {
                 MessageBox.Show("O serviço não existe.", "Informação",
                     MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+                // Mesmo assim tenta apagar a pasta de instalação
+                DeleteInstallFolder();
+                UpdateStatus();
                 return;
             }
 
             // Para o serviço antes de deletar
-            StopServiceIfRunning(serviceName);
+            StopService(serviceName);
 
             string args = $"delete \"{serviceName}\"";
 
@@ -294,80 +381,23 @@ namespace FolderCopyServiceInstall
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
 
+            // Depois de remover o serviço, apaga toda a pasta de instalação
+            DeleteInstallFolder();
+
             UpdateStatus();
         }
 
         private void BtnStart_Click(object? sender, EventArgs e)
         {
-            string serviceName = txtServiceName.Text.Trim();
-
-            if (string.IsNullOrWhiteSpace(serviceName))
-            {
-                MessageBox.Show("Informe o nome do serviço.", "Atenção",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            try
-            {
-                using var sc = new ServiceController(serviceName);
-
-                if (sc.Status == ServiceControllerStatus.Running)
-                {
-                    MessageBox.Show("O serviço já está em execução.", "Informação",
-                        MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    return;
-                }
-
-                sc.Start();
-                sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(30));
-
-                MessageBox.Show("Serviço iniciado com sucesso.", "Sucesso",
-                    MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show("Erro ao iniciar o serviço:\n\n" + ex.Message, "Erro",
-                    MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-
+            string name = txtServiceName.Text.Trim();
+            StartService(name);
             UpdateStatus();
         }
 
         private void BtnStop_Click(object? sender, EventArgs e)
         {
-            string serviceName = txtServiceName.Text.Trim();
-
-            if (string.IsNullOrWhiteSpace(serviceName))
-            {
-                MessageBox.Show("Informe o nome do serviço.", "Atenção",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            try
-            {
-                using var sc = new ServiceController(serviceName);
-
-                if (sc.Status == ServiceControllerStatus.Stopped)
-                {
-                    MessageBox.Show("O serviço já está parado.", "Informação",
-                        MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    return;
-                }
-
-                sc.Stop();
-                sc.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(30));
-
-                MessageBox.Show("Serviço parado com sucesso.", "Sucesso",
-                    MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show("Erro ao parar o serviço:\n\n" + ex.Message, "Erro",
-                    MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-
+            string name = txtServiceName.Text.Trim();
+            StopService(name);
             UpdateStatus();
         }
 
@@ -378,101 +408,325 @@ namespace FolderCopyServiceInstall
 
         #endregion
 
-        #region Métodos auxiliares (instalação / pasta / registro)
+        #region --- CONFIGURAÇÃO DO APPSETTINGS ---
 
-        private string GetInstallFolder()
+        private string GetConfigPath()
         {
-            // Instala em C:\Program Files\FolderCopyService
-            string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-            return Path.Combine(programFiles, "FolderCopyService");
-
-            // Se preferir C:\FolderCopyService, troque por:
-            // return @"C:\FolderCopyService";
+            return Path.Combine(GetInstallFolder(), "appsettings.json");
         }
 
-        private void EnsureInstallFolder()
+        private void BtnLoadConfig_Click(object? sender, EventArgs e)
         {
-            string installDir = GetInstallFolder();
+            LoadConfig();
+        }
+
+        private void LoadConfig()
+        {
+            string file = GetConfigPath();
+
+            if (!File.Exists(file))
+            {
+                // Se não existir, não reclama alto, só deixa em branco.
+                return;
+            }
+
             try
             {
-                if (!Directory.Exists(installDir))
+                var json = File.ReadAllText(file);
+                using var doc = JsonDocument.Parse(json);
+
+                if (!doc.RootElement.TryGetProperty("BackupOptions", out var backupOptions))
+                    return;
+
+                if (backupOptions.TryGetProperty("SourcePath", out var srcProp))
+                    txtSourcePath.Text = srcProp.GetString() ?? string.Empty;
+
+                if (backupOptions.TryGetProperty("TargetPath", out var tgtProp))
+                    txtTargetPath.Text = tgtProp.GetString() ?? string.Empty;
+
+                if (backupOptions.TryGetProperty("IntervalMinutes", out var intProp))
                 {
-                    Directory.CreateDirectory(installDir);
+                    int val = intProp.GetInt32();
+                    if (val < numInterval.Minimum) val = (int)numInterval.Minimum;
+                    if (val > numInterval.Maximum) val = (int)numInterval.Maximum;
+                    numInterval.Value = val;
                 }
             }
             catch (Exception ex)
             {
+                MessageBox.Show("Erro ao carregar config:\n" + ex,
+                    "Erro",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+            }
+        }
+
+        private void BtnSaveConfig_Click(object? sender, EventArgs e)
+        {
+            SaveConfig();
+        }
+
+        private void SaveConfig()
+        {
+            string file = GetConfigPath();
+
+            try
+            {
+                var json = new
+                {
+                    BackupOptions = new
+                    {
+                        SourcePath = txtSourcePath.Text,
+                        TargetPath = txtTargetPath.Text,
+                        IntervalMinutes = (int)numInterval.Value
+                    }
+                };
+
+                string output = JsonSerializer.Serialize(json, new JsonSerializerOptions
+                {
+                    WriteIndented = true
+                });
+
+                File.WriteAllText(file, output, Encoding.UTF8);
+
+                MessageBox.Show("Configurações salvas!", "Sucesso",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+                // Reinicia o serviço automaticamente pra aplicar as mudanças
+                RestartService(txtServiceName.Text.Trim());
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Erro ao salvar config:\n" + ex,
+                    "Erro",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+            }
+        }
+
+        #endregion
+
+        #region --- CONTROLE DE SERVIÇOS ---
+
+        private void StartService(string serviceName)
+        {
+            if (string.IsNullOrWhiteSpace(serviceName))
+                return;
+
+            try
+            {
+                using var sc = new ServiceController(serviceName);
+                if (sc.Status != ServiceControllerStatus.Running &&
+                    sc.Status != ServiceControllerStatus.StartPending)
+                {
+                    sc.Start();
+                    sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(30));
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Erro ao iniciar serviço:\n" + ex,
+                    "Erro",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+            }
+        }
+
+        private void StopService(string serviceName)
+        {
+            if (string.IsNullOrWhiteSpace(serviceName))
+                return;
+
+            try
+            {
+                using var sc = new ServiceController(serviceName);
+                if (sc.Status != ServiceControllerStatus.Stopped &&
+                    sc.Status != ServiceControllerStatus.StopPending)
+                {
+                    sc.Stop();
+                    sc.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(30));
+                }
+            }
+            catch
+            {
+                // Ignora erro pra não travar a UX
+            }
+        }
+
+        private void RestartService(string serviceName)
+        {
+            if (!ServiceExists(serviceName))
+                return;
+
+            StopService(serviceName);
+            StartService(serviceName);
+        }
+
+        private void UpdateStatus()
+        {
+            string name = txtServiceName.Text.Trim();
+
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                lblStatus.Text = "Status: (informe o nome do serviço)";
+                return;
+            }
+
+            if (!ServiceExists(name))
+            {
+                lblStatus.Text = "Status: Não instalado";
+                return;
+            }
+
+            try
+            {
+                using var sc = new ServiceController(name);
+                lblStatus.Text = $"Status: {sc.Status}";
+            }
+            catch
+            {
+                lblStatus.Text = "Status: Erro ao consultar";
+            }
+        }
+
+        private bool ServiceExists(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                return false;
+
+            try
+            {
+                foreach (var s in ServiceController.GetServices())
+                    if (s.ServiceName.Equals(name, StringComparison.OrdinalIgnoreCase))
+                        return true;
+            }
+            catch
+            {
+                // Se der erro, assume que não
+            }
+
+            return false;
+        }
+
+        #endregion
+
+        #region --- SC (instalação) ---
+
+        private bool RunSc(string arguments, out string output, out string error)
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "sc.exe",
+                Arguments = arguments,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            using var p = Process.Start(psi);
+            if (p == null)
+            {
+                output = "";
+                error = "Não foi possível iniciar sc.exe.";
+                return false;
+            }
+
+            output = p.StandardOutput.ReadToEnd();
+            error = p.StandardError.ReadToEnd();
+
+            p.WaitForExit();
+
+            return p.ExitCode == 0;
+        }
+
+        #endregion
+
+        #region --- ARQUIVOS & DIRETÓRIOS ---
+
+        private string GetInstallFolder()
+        {
+            string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            return Path.Combine(programFiles, "FolderCopyService");
+        }
+
+        private void EnsureInstallFolder()
+        {
+            var dir = GetInstallFolder();
+            if (!Directory.Exists(dir))
+                Directory.CreateDirectory(dir);
+        }
+
+        private void CopyInstallerToInstallFolder()
+        {
+            try
+            {
+                string installDir = GetInstallFolder();
+                string current = Application.ExecutablePath;
+                string dest = Path.Combine(installDir, "FolderCopyServiceInstall.exe");
+
+                if (!File.Exists(dest))
+                    File.Copy(current, dest, overwrite: false);
+            }
+            catch
+            {
+                // Se falhar, não é crítico
+            }
+        }
+
+        private void CopyDirectoryRecursive(string from, string to)
+        {
+            Directory.CreateDirectory(to);
+
+            foreach (string file in Directory.GetFiles(from))
+            {
+                string dest = Path.Combine(to, Path.GetFileName(file));
+                File.Copy(file, dest, overwrite: true);
+            }
+
+            foreach (string dir in Directory.GetDirectories(from))
+            {
+                string dest = Path.Combine(to, Path.GetFileName(dir));
+                CopyDirectoryRecursive(dir, dest);
+            }
+        }
+
+        /// <summary>
+        /// Apaga toda a pasta de instalação em Program Files.
+        /// </summary>
+        private void DeleteInstallFolder()
+        {
+            try
+            {
+                string installDir = GetInstallFolder();
+
+                if (!Directory.Exists(installDir))
+                    return;
+
+                Directory.Delete(installDir, recursive: true);
+
                 MessageBox.Show(
-                    $"Não foi possível criar a pasta de instalação '{installDir}'.\n\n{ex.Message}",
+                    $"Pasta de instalação removida:\n{installDir}",
+                    "Limpeza concluída",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    "Não foi possível remover completamente a pasta de instalação.\n\n" +
+                    "Você pode apagá-la manualmente em:\n" +
+                    GetInstallFolder() + "\n\n" +
+                    "Detalhes:\n" + ex.Message,
                     "Aviso",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
             }
         }
 
-        /// <summary>
-        /// Copia o próprio instalador para a pasta de instalação,
-        /// para que o usuário possa usá-lo depois sem pendrive.
-        /// </summary>
-        private void CopyInstallerToInstallFolder()
-        {
-            try
-            {
-                string installDir = GetInstallFolder();
+        #endregion
 
-                // Caminho do EXE atual (onde o instalador está rodando – pendrive, por exemplo)
-                string currentExe = Application.ExecutablePath;
-
-                // Nome fixo dentro da pasta de instalação
-                string destExe = Path.Combine(installDir, "FolderCopyServiceInstall.exe");
-
-                if (!File.Exists(destExe))
-                {
-                    File.Copy(currentExe, destExe, overwrite: false);
-                }
-                // Se quiser SEMPRE atualizar, use:
-                // File.Copy(currentExe, destExe, overwrite: true);
-            }
-            catch
-            {
-                // Se der erro, não quebra o app – é só um "extra"
-            }
-        }
-
-        private void CopyDirectoryRecursive(string sourceDir, string destDir)
-        {
-            sourceDir = Path.GetFullPath(sourceDir);
-            destDir = Path.GetFullPath(destDir);
-
-            if (string.Equals(sourceDir, destDir, StringComparison.OrdinalIgnoreCase))
-            {
-                // Já está no lugar, não precisa copiar
-                return;
-            }
-
-            if (!Directory.Exists(sourceDir))
-            {
-                throw new DirectoryNotFoundException($"Diretório de origem não encontrado: {sourceDir}");
-            }
-
-            Directory.CreateDirectory(destDir);
-
-            // Copia arquivos
-            foreach (var file in Directory.GetFiles(sourceDir))
-            {
-                string fileName = Path.GetFileName(file);
-                string destFile = Path.Combine(destDir, fileName);
-                File.Copy(file, destFile, overwrite: true);
-            }
-
-            // Copia subpastas
-            foreach (var dir in Directory.GetDirectories(sourceDir))
-            {
-                string dirName = Path.GetFileName(dir);
-                string destSubDir = Path.Combine(destDir, dirName);
-                CopyDirectoryRecursive(dir, destSubDir);
-            }
-        }
+        #region --- REGISTRO / SERVIÇO EXISTENTE ---
 
         private string? TryGetServiceImagePath(string serviceName)
         {
@@ -481,10 +735,7 @@ namespace FolderCopyServiceInstall
                 using var key = Registry.LocalMachine.OpenSubKey(
                     $@"SYSTEM\CurrentControlSet\Services\{serviceName}");
 
-                if (key == null)
-                    return null;
-
-                return key.GetValue("ImagePath") as string;
+                return key?.GetValue("ImagePath") as string;
             }
             catch
             {
@@ -501,131 +752,16 @@ namespace FolderCopyServiceInstall
 
             if (imagePath.StartsWith("\""))
             {
-                int secondQuote = imagePath.IndexOf('"', 1);
-                if (secondQuote > 1)
-                {
-                    return imagePath.Substring(1, secondQuote - 1);
-                }
+                int index = imagePath.IndexOf('"', 1);
+                if (index > 1)
+                    return imagePath.Substring(1, index - 1);
             }
 
-            int firstSpace = imagePath.IndexOf(' ');
-            if (firstSpace > 0)
-            {
-                return imagePath.Substring(0, firstSpace);
-            }
+            int space = imagePath.IndexOf(' ');
+            if (space > 0)
+                return imagePath.Substring(0, space);
 
             return imagePath;
-        }
-
-        #endregion
-
-        #region Métodos auxiliares (status / sc / serviço)
-
-        private void UpdateStatus()
-        {
-            string serviceName = txtServiceName.Text.Trim();
-
-            if (string.IsNullOrWhiteSpace(serviceName))
-            {
-                lblStatus.Text = "Status: (informe o nome do serviço)";
-                return;
-            }
-
-            if (!ServiceExists(serviceName))
-            {
-                lblStatus.Text = "Status: serviço não encontrado";
-                return;
-            }
-
-            try
-            {
-                using var sc = new ServiceController(serviceName);
-                lblStatus.Text = $"Status: {sc.Status}";
-            }
-            catch (Exception ex)
-            {
-                lblStatus.Text = $"Status: erro ao consultar ({ex.Message})";
-            }
-        }
-
-        private bool ServiceExists(string serviceName)
-        {
-            try
-            {
-                ServiceController[] services = ServiceController.GetServices();
-                foreach (var s in services)
-                {
-                    if (string.Equals(s.ServiceName, serviceName, StringComparison.OrdinalIgnoreCase))
-                        return true;
-                }
-
-                return false;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        private void StopServiceIfRunning(string serviceName)
-        {
-            try
-            {
-                using var sc = new ServiceController(serviceName);
-                if (sc.Status != ServiceControllerStatus.Stopped &&
-                    sc.Status != ServiceControllerStatus.StopPending)
-                {
-                    sc.Stop();
-                    sc.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(30));
-                }
-            }
-            catch
-            {
-                // ignora, vamos tentar deletar mesmo assim
-            }
-        }
-
-        private bool RunSc(string arguments, out string output, out string error)
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = "sc.exe",
-                Arguments = arguments,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            var sbOut = new StringBuilder();
-            var sbErr = new StringBuilder();
-
-            try
-            {
-                using var proc = Process.Start(psi);
-                if (proc == null)
-                {
-                    output = "";
-                    error = "Não foi possível iniciar o processo 'sc.exe'.";
-                    return false;
-                }
-
-                sbOut.Append(proc.StandardOutput.ReadToEnd());
-                sbErr.Append(proc.StandardError.ReadToEnd());
-
-                proc.WaitForExit();
-
-                output = sbOut.ToString();
-                error = sbErr.ToString();
-
-                return proc.ExitCode == 0;
-            }
-            catch (Exception ex)
-            {
-                output = sbOut.ToString();
-                error = "Exceção ao executar 'sc.exe': " + ex.Message;
-                return false;
-            }
         }
 
         #endregion
