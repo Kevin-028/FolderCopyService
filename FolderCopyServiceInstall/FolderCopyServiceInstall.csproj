@@ -7,7 +7,19 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Authors>Kevin Romeiro</Authors>
+    <Company></Company>
+    <Description>Sistema desenvolvido para fazer o BKP de arquivos.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <NeutralLanguage>pt</NeutralLanguage>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\README.md">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\ServiceFolderCopy\FolderCopyService.csproj" />
